@@ -16,6 +16,7 @@ std::optional<std::string> read_source(const std::filesystem::path &path) {
         return std::nullopt;
     }
 
+    // returning file contents in string format
     return std::string(std::istreambuf_iterator<char>(file),
                        std::istreambuf_iterator<char>());
 }
