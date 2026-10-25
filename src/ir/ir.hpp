@@ -33,6 +33,7 @@ enum class Op {
     Nop,
 };
 
+// one three-address step (a quadruple): op, result, two inputs, and a target for jumps
 struct Instruction {
     Op op;
     std::string result;

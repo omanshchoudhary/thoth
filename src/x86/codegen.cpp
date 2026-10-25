@@ -9,22 +9,27 @@ namespace thoth::x86 {
 
 namespace {
 
+// system v order for the first six arguments
 const std::string ARGUMENT_REGISTERS[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+// registers that can hold variables; rax, rdx and r11 stay free as scratch
 const std::string POOL[] = {"rcx", "rsi", "rdi", "r8", "r9", "r10"};
 const int POOL_SIZE = 6;
 const int NEVER = 1000000000;
 const std::string DIVIDE_MESSAGE = "panic: runtime error: integer divide by zero\n";
 
+// what a pool register holds and whether its slot in memory is out of date
 struct Register {
     std::string holds;
     bool dirty = false;
 };
 
+// x86 instructions only take 32-bit immediates
 bool fits_in_32_bits(const std::string &constant) {
     std::int64_t value = std::stoll(constant);
     return value >= -2147483648LL && value <= 2147483647LL;
 }
 
+// writes one function: stack frame, then one template per instruction
 class FunctionWriter {
   public:
     FunctionWriter(const ir::Function &function, std::string &out)
@@ -69,6 +74,7 @@ class FunctionWriter {
     std::vector<std::string> params_;
 };
 
+// every name gets an 8-byte slot at [rbp - 8 * n]
 void FunctionWriter::add_slot(const std::string &name) {
     if (name.empty() || ir::is_constant(name) || slots_.count(name)) {
         return;
@@ -77,6 +83,7 @@ void FunctionWriter::add_slot(const std::string &name) {
     slots_[name] = next;
 }
 
+// which register holds this name, -1 if none
 int FunctionWriter::find(const std::string &name) const {
     for (int r = 0; r < POOL_SIZE; r++) {
         if (registers_[r].holds == name) {
@@ -86,6 +93,7 @@ int FunctionWriter::find(const std::string &name) const {
     return -1;
 }
 
+// next-use information: the next step in this block that reads the name
 int FunctionWriter::next_use(const std::string &name, int index) const {
     for (int i = index + 1; i <= block_end_[index]; i++) {
         const ir::Instruction &instruction = function_.code[i];
@@ -101,6 +109,7 @@ int FunctionWriter::next_use(const std::string &name, int index) const {
     return NEVER;
 }
 
+// a free register, or evict the one whose value is needed furthest away
 int FunctionWriter::allocate(int index, int pinned) {
     for (int r = 0; r < POOL_SIZE; r++) {
         if (r != pinned && registers_[r].holds.empty()) {
@@ -124,6 +133,7 @@ int FunctionWriter::allocate(int index, int pinned) {
     return victim;
 }
 
+// make sure a value is in a register, reading it from its slot if needed
 int FunctionWriter::load(const std::string &operand, int index, int pinned) {
     int found = find(operand);
     if (found >= 0) {
@@ -140,6 +150,7 @@ int FunctionWriter::load(const std::string &operand, int index, int pinned) {
     return reg;
 }
 
+// small constants can be used directly as an immediate
 std::string FunctionWriter::source(const std::string &operand, int index,
                                    int pinned) {
     if (ir::is_constant(operand) && fits_in_32_bits(operand)) {
@@ -148,6 +159,7 @@ std::string FunctionWriter::source(const std::string &operand, int index,
     return POOL[load(operand, index, pinned)];
 }
 
+// the result is in rax; keep it in a register and mark it dirty
 void FunctionWriter::store_rax(const std::string &name, int index) {
     int reg = find(name);
     if (reg < 0) {
@@ -158,6 +170,7 @@ void FunctionWriter::store_rax(const std::string &name, int index) {
     line("mov " + POOL[reg] + ", rax");
 }
 
+// write a changed register back to its slot
 void FunctionWriter::spill(int reg) {
     Register &r = registers_[reg];
     if (r.dirty && !r.holds.empty()) {
@@ -166,12 +179,14 @@ void FunctionWriter::spill(int reg) {
     r.dirty = false;
 }
 
+// before jumps, calls and block ends memory has to be up to date
 void FunctionWriter::spill_all() {
     for (int r = 0; r < POOL_SIZE; r++) {
         spill(r);
     }
 }
 
+// after a call or at a new block, register contents can't be trusted
 void FunctionWriter::forget_all() {
     for (int r = 0; r < POOL_SIZE; r++) {
         registers_[r].holds.clear();
@@ -179,6 +194,7 @@ void FunctionWriter::forget_all() {
     }
 }
 
+// mov from a constant, a register or a slot, whichever has the value
 std::string FunctionWriter::value_into(const std::string &reg,
                                        const std::string &operand) {
     if (ir::is_constant(operand)) {
@@ -191,6 +207,7 @@ std::string FunctionWriter::value_into(const std::string &reg,
     return "mov " + reg + ", " + slot(operand);
 }
 
+// frame layout, block boundaries and labels, then every instruction
 void FunctionWriter::write() {
     int count = function_.code.size();
     for (const std::string &param : function_.params) {
@@ -227,6 +244,7 @@ void FunctionWriter::write() {
     }
 
     int frame = 8 * slots_.size();
+    // the stack has to stay 16-byte aligned for calls
     frame = (frame + 15) / 16 * 16;
 
     out_ += "\n.globl go." + function_.name + "\n";
@@ -254,6 +272,7 @@ void FunctionWriter::write() {
     line("ret");
 }
 
+// one template per instruction kind
 void FunctionWriter::write_instruction(int index) {
     const ir::Instruction &instruction = function_.code[index];
     switch (instruction.op) {
@@ -319,6 +338,7 @@ void FunctionWriter::write_instruction(int index) {
     }
 }
 
+// left operand in rax, combine with the right one, store the result
 void FunctionWriter::write_binary(const ir::Instruction &instruction,
                                   int index) {
     line(value_into("rax", instruction.arg1));
@@ -354,6 +374,7 @@ void FunctionWriter::write_binary(const ir::Instruction &instruction,
     store_rax(instruction.result, index);
 }
 
+// idiv faults on 0 and on MinInt / -1, so both are handled before it
 void FunctionWriter::write_division(const ir::Instruction &instruction,
                                     int index) {
     std::string tag = function_.name + "." + std::to_string(index);
@@ -379,6 +400,7 @@ void FunctionWriter::write_division(const ir::Instruction &instruction,
     store_rax(instruction.result, index);
 }
 
+// arguments go in registers; the result comes back in rax
 void FunctionWriter::write_call(const ir::Instruction &instruction) {
     spill_all();
     forget_all();
@@ -392,6 +414,7 @@ void FunctionWriter::write_call(const ir::Instruction &instruction) {
     }
 }
 
+// fmt.Println is done with printf and putchar from the c library
 void FunctionWriter::write_print(const ir::Instruction &instruction) {
     spill_all();
     forget_all();
@@ -424,6 +447,7 @@ void FunctionWriter::write_print(const ir::Instruction &instruction) {
 
 } // namespace
 
+// strings, a c main that calls go.main, the panic handler, then every function
 std::string generate(const ir::Program &program) {
     std::string out;
     out += ".intel_syntax noprefix\n";

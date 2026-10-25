@@ -9,6 +9,7 @@ namespace thoth::ir {
 
 namespace {
 
+// a block starts at the first step, at every jump target and after every jump or return
 std::vector<bool> find_leaders(const Function &function) {
     int count = function.code.size();
     std::vector<bool> leader(count, false);
@@ -29,6 +30,7 @@ std::vector<bool> find_leaders(const Function &function) {
     return leader;
 }
 
+// which block each instruction belongs to
 std::vector<int> block_of_each(const std::vector<Block> &blocks, int count) {
     std::vector<int> owner(count, 0);
     int block_count = blocks.size();
@@ -44,6 +46,7 @@ std::int64_t constant_value(const std::string &operand) {
     return std::stoll(operand);
 }
 
+// go arithmetic on 64-bit ints: wraps on overflow (done unsigned), MinInt / -1 = MinInt
 bool fold_binary(Op op, std::int64_t a, std::int64_t b, std::int64_t &out) {
     std::uint64_t ua = static_cast<std::uint64_t>(a);
     std::uint64_t ub = static_cast<std::uint64_t>(b);
@@ -92,6 +95,7 @@ bool fold_binary(Op op, std::int64_t a, std::int64_t b, std::int64_t &out) {
     }
 }
 
+// turn an instruction into x = value
 void make_copy(Instruction &instruction, const std::string &value) {
     instruction.op = Op::Copy;
     instruction.arg1 = value;
@@ -102,6 +106,7 @@ bool is_value(const std::string &operand, std::int64_t number) {
     return is_constant(operand) && constant_value(operand) == number;
 }
 
+// algebra rules: x + 0, x - 0, x * 1, x / 1 and x * 0
 std::string simplified(const Instruction &i) {
     if (i.op == Op::Add && is_value(i.arg2, 0))
         return i.arg1;
@@ -118,6 +123,7 @@ std::string simplified(const Instruction &i) {
     return "";
 }
 
+// compute operations whose inputs are already known numbers
 bool fold_constants(Function &function) {
     bool changed = false;
     for (Instruction &i : function.code) {
@@ -135,6 +141,7 @@ bool fold_constants(Function &function) {
         } else if (i.op == Op::Not && c1) {
             make_copy(i, i.arg1 == "0" ? "1" : "0");
         } else if ((i.op == Op::IfFalse || i.op == Op::IfTrue) && c1) {
+            // a branch on a constant becomes a plain goto or disappears
             bool jumps = (i.arg1 != "0") == (i.op == Op::IfTrue);
             i.op = jumps ? Op::Goto : Op::Nop;
             i.arg1.clear();
@@ -150,11 +157,13 @@ bool fold_constants(Function &function) {
     return changed;
 }
 
+// instructions whose arg1 is a value, not a function name
 bool reads_arg1(Op op) {
     return op != Op::Call && op != Op::Goto && op != Op::PrintSpace &&
            op != Op::PrintNewline && op != Op::Nop;
 }
 
+// a name changed: drop what we knew about it and every copy of it
 void forget(std::map<std::string, std::string> &known, const std::string &name) {
     known.erase(name);
     std::vector<std::string> stale;
@@ -168,6 +177,7 @@ void forget(std::map<std::string, std::string> &known, const std::string &name) 
     }
 }
 
+// inside each block, replace names whose value is known (constants and copies)
 bool propagate(Function &function) {
     bool changed = false;
     std::vector<Block> blocks = build_blocks(function);
@@ -195,6 +205,7 @@ bool propagate(Function &function) {
     return changed;
 }
 
+// t = a + b followed by x = t, with t used once, becomes x = a + b
 bool merge_copies(Function &function) {
     std::map<std::string, int> use_count;
     std::map<std::string, int> def_count;
@@ -225,6 +236,7 @@ bool merge_copies(Function &function) {
     return changed;
 }
 
+// liveness data flow, repeated until stable, then delete writes nobody reads
 bool remove_dead_code(Function &function) {
     std::vector<Block> blocks = build_blocks(function);
     int block_count = blocks.size();
@@ -247,6 +259,7 @@ bool remove_dead_code(Function &function) {
     std::vector<std::set<std::string>> live_in(block_count);
     std::vector<std::set<std::string>> live_out(block_count);
     bool stable = false;
+    // live_out = live_in of the next blocks; live_in = used + (live_out - defined)
     while (!stable) {
         stable = true;
         for (int b = block_count - 1; b >= 0; b--) {
@@ -294,6 +307,7 @@ bool remove_dead_code(Function &function) {
     return changed;
 }
 
+// blocks that no path from the entry reaches are deleted
 bool remove_unreachable(Function &function) {
     std::vector<Block> blocks = build_blocks(function);
     if (blocks.empty()) {
@@ -327,6 +341,7 @@ bool remove_unreachable(Function &function) {
     return changed;
 }
 
+// a jump to a goto goes straight to its target; a goto to the next step is removed
 bool simplify_jumps(Function &function) {
     bool changed = false;
     int count = function.code.size();
@@ -352,6 +367,7 @@ bool simplify_jumps(Function &function) {
     return changed;
 }
 
+// delete the nop steps and renumber every jump target
 void compact(Function &function) {
     int count = function.code.size();
     std::vector<int> new_index(count + 1, 0);
@@ -380,6 +396,7 @@ void compact(Function &function) {
     function.code = kept;
 }
 
+// run the passes again and again until a whole round changes nothing
 void optimize_function(Function &function) {
     for (int round = 0; round < 100; round++) {
         bool changed = false;
@@ -409,6 +426,7 @@ void optimize_function(Function &function) {
 
 } // namespace
 
+// cut the code at the leaders and connect each block to the blocks that can follow it
 std::vector<Block> build_blocks(const Function &function) {
     std::vector<Block> blocks;
     std::vector<bool> leader = find_leaders(function);
@@ -449,6 +467,7 @@ void optimize(Program &program) {
     }
 }
 
+// blocks, their arrows and their code for --emit=cfg
 std::string dump_cfg(const Program &program) {
     std::string out;
     for (const Function &function : program.functions) {

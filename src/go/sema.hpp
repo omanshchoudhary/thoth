@@ -19,6 +19,7 @@ enum class SymbolKind {
     Package,
 };
 
+// one declared name: what it is, its type and where it was declared
 struct Symbol {
     std::string name;
     SymbolKind kind;

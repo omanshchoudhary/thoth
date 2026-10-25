@@ -2,6 +2,7 @@
 
 namespace thoth::go {
 
+// names in the same order as the TokenKind enum
 std::string_view to_string(TokenKind kind) {
     const char *names[] = {
         "Package",     "Import",        "Func",        "Var",

@@ -7,11 +7,13 @@ namespace thoth::go {
 
 namespace {
 
+// (line:col) suffix for the symbol table dump
 std::string where(SourceLocation location) {
     return "(" + std::to_string(location.line) + ":" +
            std::to_string(location.column) + ")";
 }
 
+// go's terminating statement rule, used for "missing return"
 bool is_terminating(const Stmt &stmt) {
     switch (stmt.kind) {
     case StmtKind::Return:
@@ -37,23 +39,27 @@ bool is_terminating(const Stmt &stmt) {
 
 std::string type_name(Type type) { return std::string(to_string(type)); }
 
+// e.g. "x (value of type int)"
 std::string value_text(const Expr &expr, Type type) {
     return to_text(expr) + " (value of type " + type_name(type) +
            ")";
 }
 
 
+// go-style "cannot use ... as ... value in ..." message
 std::string cannot_use(const Expr &expr, Type have, Type want,
                        const std::string &context) {
     return "cannot use " + value_text(expr, have) + " as " + type_name(want) +
            " value in " + context;
 }
 
+// dividing by a literal 0 is a compile-time error in go
 bool is_zero_literal(const Expr &expr) {
     return expr.kind == ExprKind::Integer &&
            static_cast<const IntegerExpr &>(expr).value == 0;
 }
 
+// walks the tree once with a stack of scopes, recording types and errors
 class Checker {
   public:
     explicit Checker(Program &program) : program_(program) {}
@@ -98,6 +104,7 @@ class Checker {
     std::size_t function_depth_ = 0;
 };
 
+// symbols are owned by the result so the tree can point at them
 Symbol *Checker::new_symbol(std::string name, SymbolKind kind, Type type,
                             SourceLocation location) {
     auto symbol = std::make_unique<Symbol>();
@@ -109,6 +116,7 @@ Symbol *Checker::new_symbol(std::string name, SymbolKind kind, Type type,
     return result_.symbols.back().get();
 }
 
+// add to the innermost scope; a second declaration there is an error
 void Checker::declare(Symbol *symbol) {
     if (lookup_current(symbol->name)) {
         error(symbol->location, symbol->name + " redeclared in this block");
@@ -117,6 +125,7 @@ void Checker::declare(Symbol *symbol) {
     scopes_.back().push_back(symbol);
 }
 
+// search only the innermost scope
 Symbol *Checker::lookup_current(std::string_view name) const {
     for (Symbol *symbol : scopes_.back()) {
         if (symbol->name == name) {
@@ -126,6 +135,7 @@ Symbol *Checker::lookup_current(std::string_view name) const {
     return nullptr;
 }
 
+// search from the innermost scope outwards, so inner names hide outer ones
 Symbol *Checker::lookup(std::string_view name) const {
     for (int i = scopes_.size() - 1; i >= 0; i--) {
         for (Symbol *symbol : scopes_[i]) {
@@ -137,6 +147,7 @@ Symbol *Checker::lookup(std::string_view name) const {
     return nullptr;
 }
 
+// leaving a scope is when go reports variables that were never used
 void Checker::exit_scope() {
     for (Symbol *symbol : scopes_.back()) {
         if (symbol->kind == SymbolKind::Variable && !symbol->used) {
@@ -150,6 +161,7 @@ void Checker::error(SourceLocation location, std::string message) {
     result_.diagnostics.push_back({location, std::move(message)});
 }
 
+// one line of --emit=symbols, indented by scope depth
 void Checker::note(Symbol *symbol, const std::string &kind_text) {
     std::size_t depth = scopes_.size() - function_depth_;
     for (std::size_t i = 0; i < depth; i++) {
@@ -160,6 +172,7 @@ void Checker::note(Symbol *symbol, const std::string &kind_text) {
                             where(symbol->location) + "\n";
 }
 
+// a type name has to be int or bool
 Type Checker::resolve_type(std::string_view name, SourceLocation location) {
     Symbol *symbol = lookup(name);
     if (!symbol) {
@@ -173,6 +186,7 @@ Type Checker::resolve_type(std::string_view name, SourceLocation location) {
     return symbol->type;
 }
 
+// universe scope (int, bool, true, false), package scope, then every function
 SemaResult Checker::run() {
     enter_scope();
     declare(new_symbol("int", SymbolKind::TypeName, Type::Int, {}));
@@ -203,6 +217,7 @@ SemaResult Checker::run() {
         result_.symbol_table += "import fmt  " + where(import.location) + "\n";
     }
 
+    // declare every function first so a call can come before the definition
     for (auto &func : program_.functions) {
         declare_function(*func);
     }
@@ -230,6 +245,7 @@ SemaResult Checker::run() {
     return std::move(result_);
 }
 
+// parameter and result types from the signature
 void Checker::declare_function(FuncDecl &func) {
     Type result = Type::Void;
     if (!func.result_name.empty()) {
@@ -249,6 +265,7 @@ void Checker::declare_function(FuncDecl &func) {
     func.symbol = symbol;
 }
 
+// params share the body's scope, so redeclaring one at the top level is an error
 void Checker::check_function(FuncDecl &func) {
     const Symbol *symbol = func.symbol;
     std::string header = "func " + std::string(func.name) + "(";
@@ -283,6 +300,7 @@ void Checker::check_function(FuncDecl &func) {
     exit_scope();
 }
 
+// a block opens its own scope unless it is a function body
 void Checker::check_block(BlockStmt &block, bool new_scope) {
     if (new_scope) {
         enter_scope();
@@ -295,6 +313,7 @@ void Checker::check_block(BlockStmt &block, bool new_scope) {
     }
 }
 
+// one case per statement kind
 void Checker::check_stmt(Stmt &stmt) {
     switch (stmt.kind) {
     case StmtKind::Block:
@@ -354,6 +373,7 @@ void Checker::check_stmt(Stmt &stmt) {
     }
 }
 
+// the initializer is checked before the name exists, so var x = x sees the outer x
 void Checker::check_var(VarStmt &var) {
     Type declared = Type::Invalid;
     if (!var.type_name.empty()) {
@@ -380,6 +400,7 @@ void Checker::check_var(VarStmt &var) {
     note(symbol, "var");
 }
 
+// assignments need a variable; assigning does not count as using it
 Symbol *Checker::check_target(NameExpr &target) {
     Symbol *symbol = lookup(target.name);
     if (!symbol) {
@@ -397,6 +418,7 @@ Symbol *Checker::check_target(NameExpr &target) {
     return symbol;
 }
 
+// = needs matching types; compound operators need int on both sides
 void Checker::check_assign(AssignStmt &assign) {
     Symbol *target = check_target(*assign.target);
     Type value = value_type(*assign.value);
@@ -432,6 +454,7 @@ void Checker::check_assign(AssignStmt &assign) {
     }
 }
 
+// if gets its own scope so a variable from the init part ends with the if
 void Checker::check_if(IfStmt &if_stmt) {
     enter_scope();
     if (if_stmt.init) {
@@ -449,6 +472,7 @@ void Checker::check_if(IfStmt &if_stmt) {
     exit_scope();
 }
 
+// for gets a scope for its init variable; the loop stack is for break and continue
 void Checker::check_for(ForStmt &for_stmt) {
     enter_scope();
     if (for_stmt.init) {
@@ -470,6 +494,7 @@ void Checker::check_for(ForStmt &for_stmt) {
     exit_scope();
 }
 
+// the value has to match the function's result type
 void Checker::check_return(ReturnStmt &ret) {
     if (!ret.value) {
         if (result_type_ != Type::Void) {
@@ -492,6 +517,7 @@ void Checker::check_return(ReturnStmt &ret) {
     }
 }
 
+// like check_expr, but a call with no result can't be used as a value
 Type Checker::value_type(Expr &expr) {
     Type type = check_expr(expr);
     if (type == Type::Void) {
@@ -501,6 +527,7 @@ Type Checker::value_type(Expr &expr) {
     return type;
 }
 
+// stores the type on the node for the later phases
 Type Checker::check_expr(Expr &expr) {
     Type type = Type::Invalid;
     switch (expr.kind) {
@@ -524,6 +551,7 @@ Type Checker::check_expr(Expr &expr) {
     return type;
 }
 
+// using a variable in an expression marks it as used
 Type Checker::check_name(NameExpr &name) {
     Symbol *symbol = lookup(name.name);
     if (!symbol) {
@@ -556,6 +584,7 @@ Type Checker::check_name(NameExpr &name) {
     return Type::Invalid;
 }
 
+// - needs an int, ! needs a bool
 Type Checker::check_unary(UnaryExpr &unary) {
     Type operand = value_type(*unary.operand);
     if (operand == Type::Invalid) {
@@ -572,6 +601,7 @@ Type Checker::check_unary(UnaryExpr &unary) {
     return wanted;
 }
 
+// both sides must match; arithmetic and < need int, && and || need bool
 Type Checker::check_binary(BinaryExpr &binary) {
     Type left = value_type(*binary.left);
     Type right = value_type(*binary.right);
@@ -605,6 +635,7 @@ Type Checker::check_binary(BinaryExpr &binary) {
     return arithmetic ? Type::Int : Type::Bool;
 }
 
+// fmt.Println takes any int and bool values; other calls need the exact count and types
 Type Checker::check_call(CallExpr &call) {
     if (!call.package.empty()) {
         Symbol *package = lookup(call.package);

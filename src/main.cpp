@@ -19,6 +19,7 @@
 
 namespace {
 
+// what the command line asked for
 struct Options {
     std::string emit;
     bool optimize = true;
@@ -32,11 +33,13 @@ int usage() {
     return 1;
 }
 
+// the phases --emit can stop after
 bool known_emit(const std::string &emit) {
     return emit == "tokens" || emit == "ast" || emit == "symbols" ||
            emit == "tac" || emit == "cfg" || emit == "asm";
 }
 
+// --emit=..., -O0/-O1, -o file and exactly one input file
 bool parse_options(int argc, char *argv[], Options &options) {
     for (int i = 1; i < argc; i++) {
         std::string_view arg = argv[i];
@@ -74,6 +77,7 @@ bool parse_options(int argc, char *argv[], Options &options) {
     return true;
 }
 
+// order errors by position so they read top to bottom
 bool comes_before(const thoth::Diagnostic &a, const thoth::Diagnostic &b) {
     if (a.location.line != b.location.line) {
         return a.location.line < b.location.line;
@@ -81,6 +85,7 @@ bool comes_before(const thoth::Diagnostic &a, const thoth::Diagnostic &b) {
     return a.location.column < b.location.column;
 }
 
+// print errors as file:line:col: error: message; true if there were any
 bool report(const std::string &path, std::vector<thoth::Diagnostic> diagnostics) {
     std::stable_sort(diagnostics.begin(), diagnostics.end(), comes_before);
     for (const auto &diagnostic : diagnostics) {
@@ -91,6 +96,7 @@ bool report(const std::string &path, std::vector<thoth::Diagnostic> diagnostics)
     return !diagnostics.empty();
 }
 
+// write the .s file and let gcc assemble and link it
 int assemble(const Options &options, const std::string &assembly) {
     std::string output = options.output;
     if (output.empty()) {
@@ -116,6 +122,7 @@ int assemble(const Options &options, const std::string &assembly) {
     return 0;
 }
 
+// run the phases in order, stopping at the first one with errors or at --emit
 int run_go(const Options &options, const std::string &source) {
     auto lexed = thoth::go::lex(source);
     if (options.emit == "tokens") {

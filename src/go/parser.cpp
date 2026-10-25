@@ -9,8 +9,10 @@ namespace thoth::go {
 
 namespace {
 
+// thrown to jump back to the nearest recovery point once the error is recorded
 struct ParseError {};
 
+// how strongly a binary operator binds; 0 means not an operator
 int precedence(TokenKind kind) {
     switch (kind) {
     case TokenKind::OrOr:
@@ -36,12 +38,14 @@ int precedence(TokenKind kind) {
     }
 }
 
+// = and the compound assignments
 bool is_assign_op(TokenKind kind) {
     return kind == TokenKind::Assign || kind == TokenKind::PlusAssign ||
            kind == TokenKind::MinusAssign || kind == TokenKind::StarAssign ||
            kind == TokenKind::SlashAssign || kind == TokenKind::PercentAssign;
 }
 
+// keywords are the first ten TokenKind values
 bool is_keyword(TokenKind kind) {
     return int(kind) <= int(TokenKind::Continue);
 }
@@ -50,6 +54,7 @@ bool is_inc_dec(TokenKind kind) {
     return kind == TokenKind::Increment || kind == TokenKind::Decrement;
 }
 
+// how a token is named in go-style syntax errors
 std::string describe(const Token &token) {
     if (token.kind == TokenKind::EndOfFile) {
         return "EOF";
@@ -69,6 +74,7 @@ std::string describe(const Token &token) {
     return std::string(token.lexeme);
 }
 
+// recursive descent: one function per grammar rule, with a cursor over the tokens
 class Parser {
   public:
     explicit Parser(const std::vector<Token> &tokens) : tokens_(tokens) {}
@@ -111,6 +117,7 @@ class Parser {
     std::vector<Diagnostic> diagnostics_;
 };
 
+// look at a token without moving; stays on EndOfFile
 const Token &Parser::peek(std::size_t offset) const {
     std::size_t index = current_ + offset;
     if (index >= tokens_.size()) {
@@ -119,6 +126,7 @@ const Token &Parser::peek(std::size_t offset) const {
     return tokens_[index];
 }
 
+// move to the next token, never past EndOfFile
 const Token &Parser::advance() {
     const Token &token = peek();
     if (token.kind != TokenKind::EndOfFile) {
@@ -127,6 +135,7 @@ const Token &Parser::advance() {
     return token;
 }
 
+// take the token only if it has this kind
 bool Parser::match(TokenKind kind) {
     if (!check(kind)) {
         return false;
@@ -135,6 +144,7 @@ bool Parser::match(TokenKind kind) {
     return true;
 }
 
+// the token must have this kind, otherwise it is a syntax error
 const Token &Parser::expect(TokenKind kind, const std::string &what) {
     if (!check(kind)) {
         throw unexpected(what);
@@ -142,16 +152,19 @@ const Token &Parser::expect(TokenKind kind, const std::string &what) {
     return advance();
 }
 
+// record the message and hand back an exception to throw
 ParseError Parser::error(SourceLocation location, const std::string &message) {
     diagnostics_.push_back({location, message});
     return ParseError{};
 }
 
+// the usual "unexpected X, expected Y" message
 ParseError Parser::unexpected(const std::string &wanted) {
     return error(peek().location, "syntax error: unexpected " +
                                       describe(peek()) + ", expected " + wanted);
 }
 
+// panic mode: skip to the end of the statement, stepping over whole { } blocks
 void Parser::synchronize() {
     int depth = 0;
     while (!check(TokenKind::EndOfFile)) {
@@ -170,6 +183,7 @@ void Parser::synchronize() {
     }
 }
 
+// after a bad declaration, skip to the next func
 void Parser::synchronize_top_level() {
     advance();
     while (!check(TokenKind::EndOfFile) && !check(TokenKind::Func)) {
@@ -177,6 +191,7 @@ void Parser::synchronize_top_level() {
     }
 }
 
+// package, imports, then functions; an error in one function doesn't stop the rest
 ParseResult Parser::run() {
     auto program = std::make_unique<Program>();
     try {
@@ -202,6 +217,7 @@ ParseResult Parser::run() {
     return {std::move(program), std::move(diagnostics_)};
 }
 
+// package main followed by a newline
 void Parser::parse_package(Program &program) {
     expect(TokenKind::Package, "package clause");
     const Token &name = expect(TokenKind::Identifier, "package name");
@@ -210,6 +226,7 @@ void Parser::parse_package(Program &program) {
     expect(TokenKind::Semicolon, "newline after package clause");
 }
 
+// import "fmt" or a grouped import ( ... )
 void Parser::parse_imports(Program &program) {
     while (match(TokenKind::Import)) {
         if (match(TokenKind::LeftParen)) {
@@ -234,6 +251,7 @@ void Parser::parse_imports(Program &program) {
     }
 }
 
+// func name(params) result { body }
 std::unique_ptr<FuncDecl> Parser::parse_function() {
     expect(TokenKind::Func, "func");
     auto func = std::make_unique<FuncDecl>();
@@ -254,6 +272,7 @@ std::unique_ptr<FuncDecl> Parser::parse_function() {
     return func;
 }
 
+// a, b int, c bool: names are collected until their type appears
 void Parser::parse_params(FuncDecl &func) {
     if (match(TokenKind::RightParen)) {
         return;
@@ -279,6 +298,7 @@ void Parser::parse_params(FuncDecl &func) {
     expect(TokenKind::RightParen, ")");
 }
 
+// { statements } with recovery after each bad statement
 std::unique_ptr<BlockStmt> Parser::parse_block() {
     const Token &open = expect(TokenKind::LeftBrace, "{");
     auto block = std::make_unique<BlockStmt>();
@@ -303,6 +323,7 @@ std::unique_ptr<BlockStmt> Parser::parse_block() {
     return block;
 }
 
+// the first token decides which kind of statement this is
 std::unique_ptr<Stmt> Parser::parse_statement() {
     switch (peek().kind) {
     case TokenKind::Var:
@@ -330,6 +351,7 @@ std::unique_ptr<Stmt> Parser::parse_statement() {
     }
 }
 
+// var x int, var x = expr or var x int = expr
 std::unique_ptr<Stmt> Parser::parse_var() {
     advance();
     auto var = std::make_unique<VarStmt>();
@@ -350,6 +372,7 @@ std::unique_ptr<Stmt> Parser::parse_var() {
     return var;
 }
 
+// x := e, x = e, x += e, x++ or an expression, decided by the token after the name
 std::unique_ptr<Stmt> Parser::parse_simple_statement() {
     TokenKind next = peek(1).kind;
     if (check(TokenKind::Identifier) && next == TokenKind::Comma) {
@@ -390,6 +413,7 @@ std::unique_ptr<Stmt> Parser::parse_simple_statement() {
     return stmt;
 }
 
+// in if and for the simple statement must turn out to be an expression
 std::unique_ptr<Expr> Parser::take_condition(std::unique_ptr<Stmt> stmt) {
     if (stmt->kind != StmtKind::Expression) {
         throw error(stmt->location,
@@ -399,6 +423,7 @@ std::unique_ptr<Expr> Parser::take_condition(std::unique_ptr<Stmt> stmt) {
     return std::move(condition.expr);
 }
 
+// if [init;] cond { } [else if ... | else { }]
 std::unique_ptr<Stmt> Parser::parse_if() {
     const Token &keyword = advance();
     auto stmt = std::make_unique<IfStmt>();
@@ -430,6 +455,7 @@ std::unique_ptr<Stmt> Parser::parse_if() {
     return stmt;
 }
 
+// for { }, for cond { } or for init; cond; post { }
 std::unique_ptr<Stmt> Parser::parse_for() {
     const Token &keyword = advance();
     auto stmt = std::make_unique<ForStmt>();
@@ -460,6 +486,7 @@ std::unique_ptr<Stmt> Parser::parse_for() {
     return stmt;
 }
 
+// return with an optional value
 std::unique_ptr<Stmt> Parser::parse_return() {
     const Token &keyword = advance();
     auto stmt = std::make_unique<ReturnStmt>();
@@ -470,8 +497,10 @@ std::unique_ptr<Stmt> Parser::parse_return() {
     return stmt;
 }
 
+// the weakest level is 1 (||)
 std::unique_ptr<Expr> Parser::parse_expression() { return parse_binary(1); }
 
+// precedence climbing: keep taking operators at least as strong as min_precedence
 std::unique_ptr<Expr> Parser::parse_binary(int min_precedence) {
     auto left = parse_unary();
     while (true) {
@@ -480,6 +509,7 @@ std::unique_ptr<Expr> Parser::parse_binary(int min_precedence) {
             break;
         }
         const Token &op = advance();
+        // p + 1 makes operators of the same level group from the left
         auto right = parse_binary(p + 1);
         auto binary = std::make_unique<BinaryExpr>();
         binary->location = left->location;
@@ -491,6 +521,7 @@ std::unique_ptr<Expr> Parser::parse_binary(int min_precedence) {
     return left;
 }
 
+// prefix - and !, applied right to left
 std::unique_ptr<Expr> Parser::parse_unary() {
     if (check(TokenKind::Minus) || check(TokenKind::Not)) {
         const Token &op = advance();
@@ -503,6 +534,7 @@ std::unique_ptr<Expr> Parser::parse_unary() {
     return parse_primary();
 }
 
+// numbers, names, calls and ( expr )
 std::unique_ptr<Expr> Parser::parse_primary() {
     if (check(TokenKind::Integer)) {
         const Token &token = advance();
@@ -510,6 +542,7 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         std::uint64_t max = 9223372036854775807ULL;
         for (char c : token.lexeme) {
             std::uint64_t digit = c - '0';
+            // check before multiplying so the value itself never overflows
             if (value > (max - digit) / 10) {
                 throw error(token.location, "integer constant " +
                                                 std::string(token.lexeme) +
@@ -549,6 +582,7 @@ std::unique_ptr<Expr> Parser::parse_primary() {
     throw unexpected("expression");
 }
 
+// a plain variable reference
 std::unique_ptr<NameExpr> Parser::parse_name() {
     const Token &name = advance();
     auto expr = std::make_unique<NameExpr>();
@@ -557,6 +591,7 @@ std::unique_ptr<NameExpr> Parser::parse_name() {
     return expr;
 }
 
+// arguments separated by commas; a trailing comma is allowed
 std::unique_ptr<Expr> Parser::parse_call(const Token *package,
                                          const Token &name) {
     expect(TokenKind::LeftParen, "(");

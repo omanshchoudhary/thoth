@@ -10,6 +10,7 @@ namespace thoth::go {
 
 namespace {
 
+// compound assignments and ++/-- reuse the arithmetic ops
 ir::Op binary_op(TokenKind kind) {
     switch (kind) {
     case TokenKind::Plus:
@@ -44,6 +45,7 @@ ir::Op binary_op(TokenKind kind) {
     }
 }
 
+// turns the checked tree into three-address code, one function at a time
 class Lowerer {
   public:
     ir::Program run(const Program &program);
@@ -76,11 +78,13 @@ class Lowerer {
     std::vector<Loop> loops_;
 };
 
+// append a step and return its index, which jumps use as their target
 int Lowerer::emit(ir::Instruction instruction) {
     function_->code.push_back(instruction);
     return here() - 1;
 }
 
+// shadowed variables become x#2 and so on, so every name is unique in the function
 std::string Lowerer::name_for(const Symbol *symbol) {
     auto found = names_.find(symbol);
     if (found != names_.end()) {
@@ -105,6 +109,7 @@ ir::Program Lowerer::run(const Program &program) {
     return result;
 }
 
+// the final return makes sure every jump target exists
 void Lowerer::lower_function(const FuncDecl &func) {
     function_->name = std::string(func.name);
     function_->returns_value = func.symbol->type != Type::Void;
@@ -124,6 +129,7 @@ void Lowerer::lower_block(const BlockStmt &block) {
     }
 }
 
+// one case per statement kind; x += e becomes x = x + e
 void Lowerer::lower_stmt(const Stmt &stmt) {
     switch (stmt.kind) {
     case StmtKind::Block:
@@ -176,6 +182,7 @@ void Lowerer::lower_stmt(const Stmt &stmt) {
     }
 }
 
+// ifFalse skips the then part; its target is backpatched once it is known
 void Lowerer::lower_if(const IfStmt &if_stmt) {
     if (if_stmt.init) {
         lower_stmt(*if_stmt.init);
@@ -193,6 +200,7 @@ void Lowerer::lower_if(const IfStmt &if_stmt) {
     }
 }
 
+// test at the top, jump back at the bottom; break and continue are backpatched at the end
 void Lowerer::lower_for(const ForStmt &for_stmt) {
     if (for_stmt.init) {
         lower_stmt(*for_stmt.init);
@@ -225,6 +233,7 @@ void Lowerer::lower_for(const ForStmt &for_stmt) {
     loops_.pop_back();
 }
 
+// returns the name holding the value: a constant, a variable or a new temporary
 std::string Lowerer::lower_expr(const Expr &expr) {
     switch (expr.kind) {
     case ExprKind::Integer:
@@ -262,6 +271,7 @@ std::string Lowerer::lower_expr(const Expr &expr) {
     return "";
 }
 
+// short circuit: the right side only runs if the left side doesn't decide the result
 std::string Lowerer::lower_logical(const BinaryExpr &binary) {
     std::string temp = new_temp();
     std::string left = lower_expr(*binary.left);
@@ -275,6 +285,7 @@ std::string Lowerer::lower_logical(const BinaryExpr &binary) {
     return temp;
 }
 
+// arguments are evaluated first; fmt.Println becomes print steps
 std::string Lowerer::lower_call(const CallExpr &call) {
     std::vector<std::string> values;
     for (const auto &argument : call.arguments) {

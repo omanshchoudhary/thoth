@@ -2,6 +2,7 @@
 
 namespace thoth::go {
 
+// type names as go prints them in error messages
 std::string_view to_string(Type type) {
     switch (type) {
     case Type::Int:
@@ -16,6 +17,7 @@ std::string_view to_string(Type type) {
     return "invalid";
 }
 
+// prefix form for --emit=ast and the tests, e.g. (+ 1 (* 2 3))
 std::string to_sexpr(const Expr &expr) {
     switch (expr.kind) {
     case ExprKind::Integer:
@@ -48,6 +50,7 @@ std::string to_sexpr(const Expr &expr) {
     return "?";
 }
 
+// go-like source text for error messages, e.g. x + true
 std::string to_text(const Expr &expr) {
     switch (expr.kind) {
     case ExprKind::Integer:
@@ -94,6 +97,7 @@ std::string to_text(const Expr &expr) {
 
 namespace {
 
+// two spaces per level of nesting
 void write_line(std::string &out, int depth, const std::string &text) {
     for (int i = 0; i < depth; i++) {
         out += "  ";
@@ -104,6 +108,7 @@ void write_line(std::string &out, int depth, const std::string &text) {
 
 std::string simple_text(const Stmt &stmt);
 
+// statements with children (block, if, for) print them indented below
 void write_stmt(std::string &out, const Stmt &stmt, int depth) {
     switch (stmt.kind) {
     case StmtKind::Block: {
@@ -148,6 +153,7 @@ void write_stmt(std::string &out, const Stmt &stmt, int depth) {
     }
 }
 
+// one line of text for statements without children
 std::string simple_text(const Stmt &stmt) {
     switch (stmt.kind) {
     case StmtKind::Var: {
@@ -196,6 +202,7 @@ std::string simple_text(const Stmt &stmt) {
 
 } // namespace
 
+// the whole tree for --emit=ast
 std::string dump(const Program &program) {
     std::string out;
     write_line(out, 0, "package " + std::string(program.package_name));

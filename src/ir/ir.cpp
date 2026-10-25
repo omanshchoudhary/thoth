@@ -4,11 +4,13 @@
 
 namespace thoth::ir {
 
+// constants start with a digit or a minus sign; names never do
 bool is_constant(const std::string &operand) {
     return !operand.empty() &&
            ((operand[0] >= '0' && operand[0] <= '9') || operand[0] == '-');
 }
 
+// temporaries are t followed by digits
 bool is_temp(const std::string &operand) {
     if (operand.size() < 2 || operand[0] != 't') {
         return false;
@@ -21,10 +23,12 @@ bool is_temp(const std::string &operand) {
     return true;
 }
 
+// instructions with a target
 bool is_jump(Op op) {
     return op == Op::Goto || op == Op::IfFalse || op == Op::IfTrue;
 }
 
+// instructions with two inputs
 bool is_binary(Op op) {
     switch (op) {
     case Op::Add:
@@ -44,12 +48,14 @@ bool is_binary(Op op) {
     }
 }
 
+// instructions that write a name
 bool defines_result(const Instruction &instruction) {
     return !instruction.result.empty();
 }
 
 namespace {
 
+// constants are not names, so they are skipped
 void add_use(std::vector<std::string> &names, const std::string &operand) {
     if (!operand.empty() && !is_constant(operand)) {
         names.push_back(operand);
@@ -58,6 +64,7 @@ void add_use(std::vector<std::string> &names, const std::string &operand) {
 
 } // namespace
 
+// names an instruction reads; used by liveness and register allocation
 std::vector<std::string> uses(const Instruction &instruction) {
     std::vector<std::string> names;
     switch (instruction.op) {
@@ -79,6 +86,7 @@ std::vector<std::string> uses(const Instruction &instruction) {
 
 namespace {
 
+// operator text for printing
 const char *symbol(Op op) {
     switch (op) {
     case Op::Add:
@@ -110,6 +118,7 @@ const char *symbol(Op op) {
 
 } // namespace
 
+// one instruction in the --emit=tac format
 std::string to_string(const Instruction &i) {
     std::string target = std::to_string(i.target);
     switch (i.op) {
@@ -149,6 +158,7 @@ std::string to_string(const Instruction &i) {
     }
 }
 
+// every function for --emit=tac
 std::string dump(const Program &program) {
     std::string out;
     for (const Function &function : program.functions) {

@@ -59,6 +59,7 @@ enum class TokenKind {
     EndOfFile,
 };
 
+// a token: its kind, its exact text and where it starts
 struct Token {
     TokenKind kind;
     std::string_view lexeme;

@@ -8,12 +8,14 @@ namespace thoth::go {
 
 namespace {
 
+// letters and _ can start a name
 bool is_letter(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
 
 bool is_digit(char c) { return c >= '0' && c <= '9'; }
 
+// walks the source once with a cursor, building tokens and errors
 class Lexer {
   public:
     explicit Lexer(std::string_view source) : source_(source) {}
@@ -46,6 +48,7 @@ class Lexer {
     LexResult result_;
 };
 
+// look ahead without moving; '\0' past the end
 char Lexer::peek(std::size_t offset) const {
     if (current_ + offset >= source_.size()) {
         return '\0';
@@ -53,6 +56,7 @@ char Lexer::peek(std::size_t offset) const {
     return source_[current_ + offset];
 }
 
+// take one character and keep line:column up to date
 char Lexer::advance() {
     char c = source_[current_++];
     if (c == '\n') {
@@ -64,6 +68,7 @@ char Lexer::advance() {
     return c;
 }
 
+// take the next character only if it is the expected one (for <=, ==, ++)
 bool Lexer::match(char expected) {
     if (at_end() || peek() != expected) {
         return false;
@@ -72,6 +77,7 @@ bool Lexer::match(char expected) {
     return true;
 }
 
+// go's rule: a line ending after a name, literal, return, ++, ) or } gets a ;
 bool Lexer::needs_semicolon() const {
     if (result_.tokens.empty()) {
         return false;
@@ -93,10 +99,12 @@ bool Lexer::needs_semicolon() const {
     }
 }
 
+// inserted semicolons have empty text so --emit=tokens can mark them
 void Lexer::insert_semicolon(SourceLocation location) {
     result_.tokens.push_back({TokenKind::Semicolon, "", location});
 }
 
+// a block comment spanning lines counts as a newline for semicolon insertion
 void Lexer::skip_block_comment() {
     SourceLocation comment_location = current_location_;
     advance();
@@ -118,6 +126,7 @@ void Lexer::skip_block_comment() {
     }
 }
 
+// the lexeme is a view into the source, nothing is copied
 void Lexer::add_token(TokenKind kind) {
     result_.tokens.push_back(
         {kind, source_.substr(start_, current_ - start_), start_location_});
@@ -127,6 +136,7 @@ void Lexer::error(SourceLocation location, std::string message) {
     result_.diagnostics.push_back({location, std::move(message)});
 }
 
+// read the whole word, then check the keyword table (same order as TokenKind)
 void Lexer::lex_word() {
     while (is_letter(peek()) || is_digit(peek())) {
         advance();
@@ -145,6 +155,7 @@ void Lexer::lex_word() {
     add_token(TokenKind::Identifier);
 }
 
+// decimal only; 012 would be octal in go, so it is rejected
 void Lexer::lex_number() {
     while (is_digit(peek())) {
         advance();
@@ -166,6 +177,7 @@ void Lexer::lex_number() {
     add_token(TokenKind::Integer);
 }
 
+// only needed for import paths, so no escape sequences
 void Lexer::lex_string() {
     while (!at_end() && peek() != '"' && peek() != '\n') {
         advance();
@@ -178,6 +190,7 @@ void Lexer::lex_string() {
     add_token(TokenKind::String);
 }
 
+// the first character decides the token; match() picks the longest operator
 void Lexer::lex_token() {
     char c = advance();
     switch (c) {
@@ -273,6 +286,7 @@ void Lexer::lex_token() {
     }
 }
 
+// main loop: newlines, spaces and comments are handled here, anything else is a token
 LexResult Lexer::run() {
     while (!at_end()) {
         char c = peek();
@@ -298,6 +312,7 @@ LexResult Lexer::run() {
     if (needs_semicolon()) {
         insert_semicolon(current_location_);
     }
+    // the parser always finds EndOfFile at the end
     result_.tokens.push_back({TokenKind::EndOfFile, "", current_location_});
     return std::move(result_);
 }
