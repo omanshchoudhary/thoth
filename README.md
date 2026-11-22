@@ -44,19 +44,54 @@ Thoth compiles a deliberately small, well-defined subset of Go. Programs inside 
 ## Requirements
 
 - Linux on x86-64
-- CMake 3.28 or newer and a C++20 compiler (GCC 13 or newer)
+- Git, CMake 3.28 or newer, Ninja and a C++20 compiler (GCC 13 or newer)
 - `gcc` at compile time, to assemble and link the generated assembly
 - Optional: the Go toolchain, only to regenerate the expected outputs of the end-to-end tests
 
-## Building
+On Ubuntu:
 
 ```sh
-cmake -S . -B build -G Ninja
-cmake --build build
-ctest --test-dir build
+sudo apt install git cmake ninja-build g++
 ```
 
-GoogleTest is downloaded automatically during configuration.
+## Getting started
+
+1. Clone the repository:
+
+   ```sh
+   git clone https://github.com/omanshchoudhary/thoth.git
+   cd thoth
+   ```
+
+2. Build the compiler. GoogleTest is downloaded during configuration, so the first run needs an internet connection.
+
+   ```sh
+   cmake -S . -B build -G Ninja
+   cmake --build build
+   ```
+
+3. Run the tests:
+
+   ```sh
+   ctest --test-dir build
+   ```
+
+4. Compile and run a program:
+
+   ```sh
+   ./build/thoth examples/sum.go   # creates ./sum
+   ./sum                           # prints 15
+   ```
+
+5. Look at any phase:
+
+   ```sh
+   ./build/thoth --emit=tokens examples/sum.go
+   ./build/thoth --emit=tac examples/sum.go
+   ./build/thoth -O0 --emit=cfg examples/sum.go   # optimizer off, for comparison
+   ```
+
+After changing the compiler's source, run `cmake --build build` again. Changing a `.go` program needs no rebuild.
 
 ## Usage
 
